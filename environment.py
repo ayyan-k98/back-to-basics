@@ -209,14 +209,24 @@ class MARL_QMIX_Environment:
         return agents
 
     def get_global_state_tensor(self):
-        """Creates a global state tensor for the QMIX mixer network."""
+        """Creates a global state tensor for the QMIX mixer network.
+
+        CRITICAL POMDP INTEGRITY: Uses ONLY shared knowledge from agent local maps.
+        Does NOT use self.obstacle_grid (ground truth). Global state is built by
+        aggregating what agents have collectively discovered through sensors.
+        """
         global_coverage_grid = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
         global_obstacle_grid = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
+
+        # ✅ Aggregate from agent local maps ONLY (no ground truth leakage)
         for agent in self.agents:
             for node, data in agent.local_map.nodes(data=True):
                 r, c = node
                 if 0 <= r < self.grid_size and 0 <= c < self.grid_size:
+                    # Max coverage across agents
                     global_coverage_grid[r, c] = max(global_coverage_grid[r, c], data.get('pc', 0.0))
+
+                    # Union of discovered obstacles
                     if data.get('type') == 'occupied':
                         global_obstacle_grid[r, c] = 1.0
 
@@ -393,7 +403,10 @@ class MARL_QMIX_Environment:
                     agent.update_local_map(node, pc, ntype)
 
     def raycast_coverage_update(self, agent_state: RobotState):
-        """Update global world_state coverage based on agent's sensor FOV."""
+        """Update global world_state coverage based on agent's sensor FOV.
+
+        CRITICAL POMDP FIX: Records discovered obstacles in world_state.graph.
+        """
         updated_nodes = set()
         center = np.array(agent_state.position, dtype=float)
         curr_cell_rounded = tuple(np.round(center).astype(int))
@@ -424,8 +437,20 @@ class MARL_QMIX_Environment:
                 pos_rounded = tuple(np.round(ray_pos).astype(int))
                 if not self.is_in_bounds(pos_rounded):
                     break
-                if self.obstacle_grid[pos_rounded[0], pos_rounded[1]] == 1.0:
-                    break
+
+                # ✅ POMDP FIX: Check obstacle and RECORD it if discovered
+                is_obstacle = (self.obstacle_grid[pos_rounded[0], pos_rounded[1]] == 1.0)
+                if is_obstacle:
+                    # Mark obstacle in world graph (discovered via sensor)
+                    if self.world_state.graph.has_node(pos_rounded):
+                        current_type = self.world_state.graph.nodes[pos_rounded].get('type', 'free')
+                        if current_type != 'occupied':
+                            self.world_state.graph.nodes[pos_rounded]['type'] = 'occupied'
+                            self.world_state.graph.nodes[pos_rounded]['pc'] = 0.0  # Obstacles not coverable
+                            updated_nodes.add(pos_rounded)
+                    break  # Ray blocked by obstacle
+
+                # Free space - update coverage
                 if self.world_state.graph.has_node(pos_rounded):
                     new_pc = 1.0 / (1.0 + np.exp(self.coverage_k * (ray_dist - self.coverage_r0)))
                     new_pc = np.clip(new_pc, 0.0, 1.0)

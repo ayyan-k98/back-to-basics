@@ -88,19 +88,37 @@ class MARLCoverageAgent:
             print(f"Warning: Agent {self.agent_id} could not initialize local map.")
 
     def update_local_map(self, node, pc_value, node_type=None):
-        """Update local map with new coverage or type information."""
+        """Update local map with new coverage or obstacle information.
+
+        CRITICAL POMDP FIX: Properly record discovered obstacles.
+        """
         if not self.local_map.has_node(node):
             return False
+
         updated = False
+        current_type = self.local_map.nodes[node].get('type', 'free')
+
+        # ✅ POMDP FIX: Handle obstacle discovery
+        if node_type == 'occupied':
+            if current_type != 'occupied':
+                self.local_map.nodes[node]['type'] = 'occupied'
+                self.local_map.nodes[node]['pc'] = 0.0  # Obstacles are not coverable
+                updated = True
+            return updated  # Don't update coverage for obstacles
+
+        # Update coverage probability (only for non-obstacles)
         current_pc = self.local_map.nodes[node].get('pc', -1.0)
         if pc_value > current_pc:
             self.local_map.nodes[node]['pc'] = pc_value
             updated = True
             if pc_value >= self.env.coverage_threshold:
                 self.local_map.nodes[node]['type'] = 'covered'
-        if node_type == 'covered' and self.local_map.nodes[node].get('type') != 'covered':
+
+        # Update type if specified
+        if node_type == 'covered' and current_type != 'covered' and current_type != 'occupied':
             self.local_map.nodes[node]['type'] = 'covered'
             updated = True
+
         return updated
 
     def communicate(self, other_agent, env_time):
@@ -146,14 +164,25 @@ class MARLCoverageAgent:
         return updates_made_by_me or updates_made_by_other
 
     def get_state_tensor(self):
-        """Create state tensors (coverage grid, obstacle grid, features) for the NN input."""
+        """Create state tensors (coverage grid, obstacle grid, features) for the NN input.
+
+        CRITICAL: Agent sees ONLY what it has observed through sensors (TRUE POMDP).
+        Obstacle grid is built from local_map, NOT from environment's ground truth.
+        """
         coverage_grid = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
-        obstacle_grid = self.env.obstacle_grid.astype(np.float32) if self.env.obstacle_grid is not None else np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
+        obstacle_grid = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)  # ✅ Build from local knowledge
+
+        # Build from local_map ONLY (no omniscient knowledge)
         for node, data in self.local_map.nodes(data=True):
             r, c = node
             if 0 <= r < self.grid_size and 0 <= c < self.grid_size:
-                if obstacle_grid[r, c] == 0.0:
-                    coverage_grid[r, c] = data.get('pc', 0.0)
+                # Coverage probability
+                coverage_grid[r, c] = data.get('pc', 0.0)
+
+                # ✅ POMDP FIX: Only known obstacles (discovered via raycasting)
+                if data.get('type') == 'occupied':
+                    obstacle_grid[r, c] = 1.0
+
         grid_stack = np.stack([coverage_grid, obstacle_grid], axis=0)
         grid_tensor = torch.from_numpy(grid_stack).to(self.device)  # Shape [C, H, W]
         orientation_features = np.array([math.sin(self.state.orientation), math.cos(self.state.orientation)], dtype=np.float32)
