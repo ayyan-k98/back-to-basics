@@ -48,17 +48,19 @@ class MARL_QMIX_Environment:
         orientation_cost_factor: float = 0.02,
         invalid_move_penalty: float = -0.5,
         fov_degrees: float = 120.0,
-        device: str = "cpu",
+        device: str = None,  # Auto-detect: cuda if available, else cpu
         use_dueling: bool = True,
         tensorboard_dir: str = "./runs/qmix_coverage",
         gamma: float = 0.99,
         batch_size: int = 64,
         memory_capacity: int = 50000,
         mixer_embed_dim: int = 64,
-        lr: float = 5e-4,
+        lr: float = 5e-4,  # Deprecated: use lr_agents and lr_mixer
+        lr_agents: float = 5e-4,  # Learning rate for agent networks
+        lr_mixer: float = 1e-4,   # Lower LR for mixer (5x slower)
         target_update_freq: int = 200,
         use_soft_update: bool = True,
-        soft_update_tau: float = 0.005,
+        soft_update_tau: float = 0.001,  # Slower: 0.1% per step (was 0.5%)
         agent_config: dict = {},
         coverage_r0_factor: float = 2.5,
         coverage_k: float = 2.0
@@ -78,6 +80,10 @@ class MARL_QMIX_Environment:
         self.orientation_cost_factor = orientation_cost_factor
         self.invalid_move_penalty = invalid_move_penalty
         self.fov_radians = math.radians(fov_degrees)
+        
+        # Auto-detect device: CUDA if available, else CPU
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
         self.use_dueling = use_dueling
 
@@ -89,6 +95,10 @@ class MARL_QMIX_Environment:
         self.soft_update_tau = soft_update_tau
         self.global_optimization_steps = 0
         self.agent_config = agent_config
+        
+        # Separate learning rates for stability
+        self.lr_agents = lr_agents
+        self.lr_mixer = lr_mixer
         if 'use_dueling' in self.agent_config:
             del self.agent_config['use_dueling']
 
@@ -133,7 +143,13 @@ class MARL_QMIX_Environment:
         self.optimizer = None
         self.memory = QMixReplayMemory(capacity=memory_capacity)
         self.mixer_embed_dim = mixer_embed_dim
-        self.lr = lr
+        self.lr = lr  # Kept for backward compatibility
+        
+        # Reward normalization (running statistics)
+        self.reward_mean = 0.0
+        self.reward_std = 1.0
+        self.reward_count = 0
+        self.use_reward_normalization = True  # Can disable for debugging
 
         self.raycasting_cache = {}
         print(f"QMIX Environment initialized on device: {self.device}")
@@ -275,10 +291,17 @@ class MARL_QMIX_Environment:
                 self.target_mixer = QMixNetwork(self.num_agents, self.global_state_size, self.mixer_embed_dim).to(self.device)
                 self.target_mixer.load_state_dict(self.mixer.state_dict())
                 self.target_mixer.eval()
-                all_params = list(self.mixer.parameters())
+                
+                # Separate learning rates: agents vs mixer (PROPER DESIGN)
+                agent_params = []
                 for agent in self.agents:
-                    all_params.extend(list(agent.policy_net.parameters()))
-                self.optimizer = optim.Adam(all_params, lr=self.lr)
+                    agent_params.extend(list(agent.policy_net.parameters()))
+                mixer_params = list(self.mixer.parameters())
+                
+                self.optimizer = optim.Adam([
+                    {'params': agent_params, 'lr': self.lr_agents},
+                    {'params': mixer_params, 'lr': self.lr_mixer}  # 5x slower
+                ])
 
         for i, agent in enumerate(self.agents):
             if i < len(self.world_state.robots):
@@ -291,7 +314,14 @@ class MARL_QMIX_Environment:
             else:
                 print(f"Warning: Agent index {i} out of bounds.")
 
-        self.metrics = CoverageMetrics()
+        # Only reset metrics on full_reset (initial training start), not every episode
+        if full_reset:
+            self.metrics = CoverageMetrics()
+            # Reset reward normalization statistics
+            self.reward_mean = 0.0
+            self.reward_std = 1.0
+            self.reward_count = 0
+        
         self.env_time = 0.0
         self.previous_global_coverage = 0.0
         for r_state in self.world_state.robots:
@@ -377,10 +407,18 @@ class MARL_QMIX_Environment:
             coverage_after = self.calculate_coverage_area()
             coverage_increase_area = max(0, coverage_after - coverage_before)
             reward_coverage = self.gamma_coverage * coverage_increase_area
+            
+            # Add bonus for high coverage completion (helps with plateau)
+            coverage_pct = self.calculate_coverage_percentage() / 100.0
+            completion_bonus = 0.0
+            if coverage_pct > 0.85:
+                # Scale bonus: 0 at 85%, up to 5.0 at 100%
+                completion_bonus = 5.0 * ((coverage_pct - 0.85) / 0.15)
+            
             orientation_change = min(abs(new_orientation - old_orientation), 2 * math.pi - abs(new_orientation - old_orientation))
             orientation_penalty = self.orientation_cost_factor * (orientation_change / math.pi)
             reward_step = self.step_penalty
-            reward = reward_coverage - orientation_penalty + reward_step
+            reward = reward_coverage + completion_bonus - orientation_penalty + reward_step
         else:
             new_robot_state = current_robot_state
             reward = self.invalid_move_penalty
@@ -584,8 +622,24 @@ class MARL_QMIX_Environment:
         self.global_coverage_increase = self.current_global_coverage - self.previous_global_coverage
         team_reward = self.global_coverage_increase
 
+        # Reward normalization (Welford's online algorithm for numerical stability)
+        if self.use_reward_normalization:
+            self.reward_count += 1
+            delta = team_reward - self.reward_mean
+            self.reward_mean += delta / self.reward_count
+            delta2 = team_reward - self.reward_mean
+            variance_update = delta * delta2
+            self.reward_std = np.sqrt(
+                ((self.reward_count - 1) * self.reward_std**2 + variance_update) / self.reward_count
+            )
+            
+            # Normalize reward (small epsilon prevents division by zero)
+            normalized_reward = (team_reward - self.reward_mean) / (self.reward_std + 1e-8)
+        else:
+            normalized_reward = team_reward
+
         self.memory.push(
-            global_state, local_states, agent_action_indices, team_reward,
+            global_state, local_states, agent_action_indices, normalized_reward,
             next_global_state, next_local_states, global_done
         )
 
@@ -651,23 +705,58 @@ class MARL_QMIX_Environment:
         agent_target_max_q_stacked = torch.cat(agent_target_max_q, dim=1)
 
         q_tot = self.mixer(agent_q_values_stacked, batch_global_state)
+        
         with torch.no_grad():
             target_q_tot = self.target_mixer(agent_target_max_q_stacked, batch_next_global)
             td_target = rewards_tensor + self.gamma * (1 - dones_tensor) * target_q_tot
 
-        loss = F.mse_loss(q_tot, td_target.detach())
+        # Huber loss: less sensitive to outliers than MSE (architecturally sound)
+        loss = F.smooth_l1_loss(q_tot, td_target.detach())
         self.optimizer.zero_grad()
         loss.backward()
+        
+        # Gradient clipping (standard practice, prevents exploding gradients)
         all_params = list(self.mixer.parameters())
         for agent in self.agents:
             all_params.extend(list(agent.policy_net.parameters()))
-        torch.nn.utils.clip_grad_norm_(all_params, 1.0)
+        torch.nn.utils.clip_grad_norm_(all_params, 10.0)  # Standard clip value
+        
         self.optimizer.step()
+        
+        # Log diagnostics every 1000 steps for monitoring stability
+        if self.global_optimization_steps % 1000 == 0:
+            with torch.no_grad():
+                q_range = f"[{q_tot.min():.2f}, {q_tot.max():.2f}]"
+                target_range = f"[{td_target.min():.2f}, {td_target.max():.2f}]"
+            print(f"[OPT-{self.global_optimization_steps}] Loss={loss.item():.4f}, "
+                  f"Q_tot={q_range}, TD_target={target_range}")
 
         self.metrics.qmix_loss.append(loss.item())
         self.metrics.q_tot_values.append(q_tot.mean().item())
 
         return loss.item()
+
+    def record_episode_metrics(self, episode_steps, episode_rewards_sum):
+        """Record episode-level metrics at the end of each episode."""
+        # Record final coverage percentage
+        final_coverage = self.calculate_coverage_percentage()
+        self.metrics.episode_coverage.append(final_coverage)
+        
+        # Record episode steps
+        self.metrics.episode_steps.append(episode_steps)
+        
+        # Record total episode reward (average across agents)
+        avg_reward = np.mean(list(episode_rewards_sum.values())) if episode_rewards_sum else 0.0
+        self.metrics.episode_rewards.append(avg_reward)
+        
+        # Record average loss during this episode (if any losses recorded)
+        if self.metrics.qmix_loss and episode_steps > 0:
+            # Get losses from last episode_steps (or available losses)
+            recent_losses = self.metrics.qmix_loss[-episode_steps:] if len(self.metrics.qmix_loss) >= episode_steps else self.metrics.qmix_loss
+            avg_loss = np.mean(recent_losses) if recent_losses else 0.0
+            self.metrics.episode_avg_loss.append(avg_loss)
+        else:
+            self.metrics.episode_avg_loss.append(0.0)
 
     def update_target_networks(self):
         """Update the target networks (agents and mixer)."""

@@ -107,6 +107,10 @@ def train(env, episodes_per_type=25, verbose=True, save_interval=50, model_dir="
         final_coverage_perc = env.calculate_coverage_percentage()
         avg_ep_reward = np.mean(list(episode_rewards_sum.values())) if episode_rewards_sum else 0.0
         ep_duration = time.time() - ep_start_time
+        
+        # Record episode-level metrics
+        env.record_episode_metrics(episode_steps, episode_rewards_sum)
+        
         for agent_id, agent in enumerate(env.agents):
             agent.update_epsilon()
             if env.writer:

@@ -24,6 +24,7 @@ class WorldState:
 @dataclass
 class CoverageMetrics:
     """Class to track coverage performance metrics (DQN Style + QMIX)."""
+    # STEP-LEVEL metrics (appended each step)
     total_coverage: List[float] = field(default_factory=list)
     coverage_rate: List[float] = field(default_factory=list)
     redundant_coverage: List[float] = field(default_factory=list)
@@ -35,6 +36,14 @@ class CoverageMetrics:
     communication_events: List[int] = field(default_factory=list)
     execution_times: List[float] = field(default_factory=list)
     epsilon_values: Dict[int, List[float]] = field(default_factory=lambda: {i: [] for i in range(10)})
+    
+    # EPISODE-LEVEL metrics (appended once per episode)
+    episode_coverage: List[float] = field(default_factory=list)  # Final coverage % at end of episode
+    episode_steps: List[int] = field(default_factory=list)  # Number of steps taken in episode
+    episode_rewards: List[float] = field(default_factory=list)  # Total reward accumulated in episode
+    episode_avg_loss: List[float] = field(default_factory=list)  # Average QMIX loss during episode
+    
+    # Threshold tracking
     final_coverage_reached: bool = False
     steps_to_threshold: Optional[int] = None
 

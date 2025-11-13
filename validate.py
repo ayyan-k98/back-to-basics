@@ -32,10 +32,10 @@ def test_2agents_empty_5x5():
         num_agents=2,
         sensor_range=3,
         comm_range=10.0,
-        coverage_threshold=0.8,
+        coverage_threshold=0.9,
         completion_threshold_perc=95.0,
         max_episodes=50,
-        max_steps_per_episode=50,
+        max_steps_per_episode=15,
         device="cpu",
         tensorboard_dir="./runs/validation_test1",
         # QMIX params
@@ -84,23 +84,24 @@ def test_2agents_empty_5x5():
     print("RESULTS:")
     print(f"  Final coverage: {final_coverage:.1f}%")
     print(f"  Max coverage: {max_coverage:.1f}%")
-    print(f"  Episodes completed: {len(metrics.total_coverage)}")
+    print(f"  Episodes completed: {len(metrics.episode_coverage)}")
 
-    # Check if learning happened
-    early_coverage = np.mean(metrics.total_coverage[:10]) if len(metrics.total_coverage) >= 10 else 0
-    late_coverage = np.mean(metrics.total_coverage[-10:]) if len(metrics.total_coverage) >= 10 else 0
+    # Check if learning happened (using EPISODE-level metrics now)
+    early_coverage = np.mean(metrics.episode_coverage[:10]) if len(metrics.episode_coverage) >= 10 else 0
+    late_coverage = np.mean(metrics.episode_coverage[-10:]) if len(metrics.episode_coverage) >= 10 else 0
     improvement = late_coverage - early_coverage
 
-    print(f"  Early coverage (eps 1-10): {early_coverage:.2f}")
-    print(f"  Late coverage (eps 40-50): {late_coverage:.2f}")
-    print(f"  Improvement: {improvement:.2f}")
+    print(f"  Early coverage (eps 1-10): {early_coverage:.2f}%")
+    print(f"  Late coverage (eps 40-50): {late_coverage:.2f}%")
+    print(f"  Improvement: {improvement:.2f}%")
 
-    # Check if QMIX loss decreased
-    if metrics.qmix_loss:
-        early_loss = np.mean(metrics.qmix_loss[:100])
-        late_loss = np.mean(metrics.qmix_loss[-100:])
-        print(f"  Early loss: {early_loss:.4f}")
-        print(f"  Late loss: {late_loss:.4f}")
+    # Check if QMIX loss decreased (using episode-level average loss)
+    if metrics.episode_avg_loss:
+        early_loss = np.mean(metrics.episode_avg_loss[:10]) if len(metrics.episode_avg_loss) >= 10 else 0
+        late_loss = np.mean(metrics.episode_avg_loss[-10:]) if len(metrics.episode_avg_loss) >= 10 else 0
+        print(f"  Early loss (eps 1-10): {early_loss:.4f}")
+        print(f"  Late loss (eps 40-50): {late_loss:.4f}")
+        print(f"  Loss change: {late_loss - early_loss:.4f}")
 
     # Pass/Fail
     passed = max_coverage > 95.0 and improvement > 0
@@ -176,22 +177,24 @@ def test_4agents_empty_10x10():
     # Analyze
     final_coverage = env.calculate_coverage_percentage()
 
-    early_coverage = np.mean(metrics.total_coverage[:20]) if len(metrics.total_coverage) >= 20 else 0
-    late_coverage = np.mean(metrics.total_coverage[-20:]) if len(metrics.total_coverage) >= 20 else 0
+    early_coverage = np.mean(metrics.episode_coverage[:20]) if len(metrics.episode_coverage) >= 20 else 0
+    late_coverage = np.mean(metrics.episode_coverage[-20:]) if len(metrics.episode_coverage) >= 20 else 0
     improvement = late_coverage - early_coverage
 
     print("\n" + "-"*70)
     print("RESULTS:")
     print(f"  Final coverage: {final_coverage:.1f}%")
-    print(f"  Early coverage (eps 1-20): {early_coverage:.2f}")
-    print(f"  Late coverage (eps 180-200): {late_coverage:.2f}")
-    print(f"  Improvement: {improvement:.2f}")
+    print(f"  Episodes completed: {len(metrics.episode_coverage)}")
+    print(f"  Early coverage (eps 1-20): {early_coverage:.2f}%")
+    print(f"  Late coverage (eps 180-200): {late_coverage:.2f}%")
+    print(f"  Improvement: {improvement:.2f}%")
 
-    if metrics.qmix_loss:
-        early_loss = np.mean(metrics.qmix_loss[:200])
-        late_loss = np.mean(metrics.qmix_loss[-200:])
-        print(f"  Early loss: {early_loss:.4f}")
-        print(f"  Late loss: {late_loss:.4f}")
+    if metrics.episode_avg_loss:
+        early_loss = np.mean(metrics.episode_avg_loss[:20]) if len(metrics.episode_avg_loss) >= 20 else 0
+        late_loss = np.mean(metrics.episode_avg_loss[-20:]) if len(metrics.episode_avg_loss) >= 20 else 0
+        print(f"  Early loss (eps 1-20): {early_loss:.4f}")
+        print(f"  Late loss (eps 180-200): {late_loss:.4f}")
+        print(f"  Loss change: {late_loss - early_loss:.4f}")
 
     passed = final_coverage > 85.0 and improvement > 0
     print("-"*70)
@@ -262,22 +265,24 @@ def test_2agents_obstacles_10x10():
     # Analyze
     final_coverage = env.calculate_coverage_percentage()
 
-    early_coverage = np.mean(metrics.total_coverage[:30]) if len(metrics.total_coverage) >= 30 else 0
-    late_coverage = np.mean(metrics.total_coverage[-30:]) if len(metrics.total_coverage) >= 30 else 0
+    early_coverage = np.mean(metrics.episode_coverage[:30]) if len(metrics.episode_coverage) >= 30 else 0
+    late_coverage = np.mean(metrics.episode_coverage[-30:]) if len(metrics.episode_coverage) >= 30 else 0
     improvement = late_coverage - early_coverage
 
     print("\n" + "-"*70)
     print("RESULTS:")
     print(f"  Final coverage: {final_coverage:.1f}%")
-    print(f"  Early coverage (eps 1-30): {early_coverage:.2f}")
-    print(f"  Late coverage (eps 270-300): {late_coverage:.2f}")
-    print(f"  Improvement: {improvement:.2f}")
+    print(f"  Episodes completed: {len(metrics.episode_coverage)}")
+    print(f"  Early coverage (eps 1-30): {early_coverage:.2f}%")
+    print(f"  Late coverage (eps 270-300): {late_coverage:.2f}%")
+    print(f"  Improvement: {improvement:.2f}%")
 
-    if metrics.qmix_loss:
-        early_loss = np.mean(metrics.qmix_loss[:500])
-        late_loss = np.mean(metrics.qmix_loss[-500:])
-        print(f"  Early loss: {early_loss:.4f}")
-        print(f"  Late loss: {late_loss:.4f}")
+    if metrics.episode_avg_loss:
+        early_loss = np.mean(metrics.episode_avg_loss[:30]) if len(metrics.episode_avg_loss) >= 30 else 0
+        late_loss = np.mean(metrics.episode_avg_loss[-30:]) if len(metrics.episode_avg_loss) >= 30 else 0
+        print(f"  Early loss (eps 1-30): {early_loss:.4f}")
+        print(f"  Late loss (eps 270-300): {late_loss:.4f}")
+        print(f"  Loss change: {late_loss - early_loss:.4f}")
 
     passed = final_coverage > 75.0 and improvement > 0
     print("-"*70)
@@ -302,24 +307,21 @@ def plot_validation_results(test1_metrics, test2_metrics, test3_metrics):
     ]
 
     for col, (title, metrics) in enumerate(tests):
-        # Coverage over time
+        # Coverage over time (episode-level)
         ax = axes[0, col]
-        if metrics and metrics.total_coverage:
-            ax.plot(metrics.total_coverage, alpha=0.7)
+        if metrics and metrics.episode_coverage:
+            ax.plot(metrics.episode_coverage, alpha=0.7)
             ax.set_title(f'{title}\nCoverage Progress')
             ax.set_xlabel('Episode')
-            ax.set_ylabel('Coverage Area')
+            ax.set_ylabel('Coverage %')
             ax.grid(True, alpha=0.3)
 
-        # Loss over time
+        # Loss over time (episode-level average)
         ax = axes[1, col]
-        if metrics and metrics.qmix_loss:
-            # Smooth loss
-            window = max(10, len(metrics.qmix_loss) // 50)
-            smoothed = np.convolve(metrics.qmix_loss, np.ones(window)/window, mode='valid')
-            ax.plot(smoothed, 'r-', alpha=0.7)
-            ax.set_title('QMIX Loss (smoothed)')
-            ax.set_xlabel('Optimization Step')
+        if metrics and metrics.episode_avg_loss:
+            ax.plot(metrics.episode_avg_loss, 'r-', alpha=0.7)
+            ax.set_title('QMIX Loss (per episode avg)')
+            ax.set_xlabel('Episode')
             ax.set_ylabel('Loss')
             ax.grid(True, alpha=0.3)
 
