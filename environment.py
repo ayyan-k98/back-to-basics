@@ -309,7 +309,8 @@ class MARL_QMIX_Environment:
                 agent._initialize_local_map()
                 agent.known_positions = {}
                 agent.communication_history = []
-                if self.mode == 'train' or full_reset:
+                # Only reset epsilon on FULL reset (not every episode)
+                if full_reset:
                     agent.epsilon = agent.epsilon_start
             else:
                 print(f"Warning: Agent index {i} out of bounds.")
@@ -341,17 +342,23 @@ class MARL_QMIX_Environment:
         return initial_states
 
     def get_valid_actions(self, agent_id: int):
-        """Get valid discrete actions (moves) for the agent."""
+        """Get valid discrete actions (moves) for the agent.
+        
+        CRITICAL FIX: Now checks for conflicts with other agents.
+        This ensures the network only learns Q-values for actions that will ACTUALLY execute.
+        """
         valid_actions = []
         current_pos = self.agent_positions[agent_id]
         possible_actions = self.agents[agent_id].actions
         for action in possible_actions:
             target_pos = (current_pos[0] + action[0], current_pos[1] + action[1])
-            if self.is_valid_position(target_pos, agent_id, current_pos, check_other_agents=False):
+            # FIX: Include conflict checking to prevent action space mismatch
+            if self.is_valid_position(target_pos, agent_id, current_pos, check_other_agents=True):
                 valid_actions.append(action)
         if not valid_actions:
             return [(0, 0)]
-        if (0, 0) not in valid_actions and self.is_valid_position(current_pos, agent_id, current_pos, check_other_agents=False):
+        # Also check stay action with conflict checking
+        if (0, 0) not in valid_actions and self.is_valid_position(current_pos, agent_id, current_pos, check_other_agents=True):
             valid_actions.append((0, 0))
         return valid_actions
 
