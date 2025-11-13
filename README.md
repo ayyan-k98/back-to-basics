@@ -2,6 +2,33 @@
 
 A modular implementation of QMIX (Q-Mixing Network) for multi-agent reinforcement learning applied to coverage tasks. This system uses Dueling DQN as agent networks and QMIX for value function decomposition.
 
+---
+
+## ⚠️ CURRENT STATUS: VALIDATION PHASE
+
+**What We Have:**
+- ✅ Modular codebase
+- ✅ QMIX implementation
+- ✅ **TRUE POMDP** (partial observability verified)
+- ✅ Validation test suite
+
+**What We DON'T Have:**
+- ❌ **Proof that QMIX learns** (validation pending)
+- ❌ Baseline comparisons
+- ❌ Performance benchmarks
+
+**Next Step:** Run validation tests to verify QMIX works on toy problems
+
+```bash
+python validate.py  # 30-60 min runtime
+```
+
+**Why validation first?** See [VALIDATION_FIRST.md](VALIDATION_FIRST.md) for philosophy.
+
+**DO NOT add features until validation passes!**
+
+---
+
 ## Project Structure
 
 ```
